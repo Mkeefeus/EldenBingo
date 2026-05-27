@@ -78,11 +78,34 @@ die() {
   exit 1
 }
 
+prompt_read() {
+  local prompt="$1"
+  local __result_var="$2"
+  local value=""
+
+  if [[ -r /dev/tty ]]; then
+    if ! read -r -p "$prompt" value < /dev/tty; then
+      return 1
+    fi
+  else
+    if ! read -r -p "$prompt" value; then
+      return 1
+    fi
+  fi
+
+  printf -v "$__result_var" '%s' "$value"
+}
+
 ask_yes_no() {
   local prompt="$1"
   local reply
+
   while true; do
-    read -r -p "$prompt [y/N]: " reply
+    if ! prompt_read "$prompt [y/N]: " reply; then
+      warn "Could not read prompt input."
+      return 1
+    fi
+
     case "${reply,,}" in
       y|yes) return 0 ;;
       n|no|"") return 1 ;;
@@ -490,7 +513,10 @@ select_wine_prefix() {
     die "Setup cancelled. Install Elden Ring via Steam first, launch once, then rerun setup for integration support."
   fi
 
-  read -r -p "Wine prefix path [$DEFAULT_PREFIX]: " input
+  if ! prompt_read "Wine prefix path [$DEFAULT_PREFIX]: " input; then
+    die "Could not read Wine prefix path. Re-run interactively or provide --prefix-path."
+  fi
+
   input="${input:-$DEFAULT_PREFIX}"
   WINEPREFIX_PATH="$(expand_home_path "$input")"
   SHOULD_INIT_PREFIX=1
