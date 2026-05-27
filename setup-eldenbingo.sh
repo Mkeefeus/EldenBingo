@@ -14,7 +14,6 @@ SHOULD_INIT_PREFIX=1
 USE_PROTON_LAUNCHER=0
 STEAM_CLIENT_INSTALL_PATH=""
 ELDEN_RING_COMPATDATA_DIR=""
-PROTON_PATH=""
 PREFIX_PATH_OVERRIDE=""
 FORCE_OVERWRITE=0
 SKIP_SYSTEM_PACKAGE_INSTALL=0
@@ -295,12 +294,6 @@ print_doctor_report() {
     warn "Elden Ring compat prefix not detected"
   fi
 
-  if [[ -n "$PROTON_PATH" ]]; then
-    log "Proton detected: $PROTON_PATH"
-  else
-    warn "Proton path not detected"
-  fi
-
   log "Configured install dir: $INSTALL_DIR"
   log "Configured launcher path: $LAUNCHER_PATH"
   log "Configured desktop file path: $DESKTOP_FILE_PATH"
@@ -427,64 +420,6 @@ collect_steam_library_paths() {
   done
 }
 
-detect_proton_path() {
-  local config_info
-  local version_file
-  local version_name
-  local candidate
-  local best_candidate
-  local line
-
-  PROTON_PATH=""
-  config_info="$ELDEN_RING_COMPATDATA_DIR/config_info"
-  version_file="$ELDEN_RING_COMPATDATA_DIR/version"
-
-  if [[ -f "$config_info" ]]; then
-    while IFS= read -r line; do
-      candidate="$(sed -nE 's/.*([A-Za-z0-9_./ -]+\/proton).*/\1/p' <<< "$line" | head -n1)"
-      if [[ -n "$candidate" && -x "$candidate" ]]; then
-        PROTON_PATH="$candidate"
-        break
-      fi
-    done < "$config_info"
-  fi
-
-  if [[ -z "$PROTON_PATH" && -f "$version_file" ]]; then
-    version_name="$(tr -d '\r\n' < "$version_file")"
-    if [[ -n "$version_name" ]]; then
-      for candidate in \
-        "$STEAM_CLIENT_INSTALL_PATH/steamapps/common/$version_name/proton" \
-        "$HOME/.steam/root/compatibilitytools.d/$version_name/proton" \
-        "$HOME/.local/share/Steam/compatibilitytools.d/$version_name/proton" \
-        "$HOME/.var/app/com.valvesoftware.Steam/.local/share/Steam/compatibilitytools.d/$version_name/proton"
-      do
-        if [[ -x "$candidate" ]]; then
-          PROTON_PATH="$candidate"
-          break
-        fi
-      done
-    fi
-  fi
-
-  if [[ -z "$PROTON_PATH" ]]; then
-    best_candidate=""
-    for candidate in \
-      "$STEAM_CLIENT_INSTALL_PATH/steamapps/common/Proton"*/proton \
-      "$HOME/.steam/root/compatibilitytools.d"/*/proton \
-      "$HOME/.local/share/Steam/compatibilitytools.d"/*/proton \
-      "$HOME/.var/app/com.valvesoftware.Steam/.local/share/Steam/compatibilitytools.d"/*/proton
-    do
-      if [[ -x "$candidate" ]]; then
-        best_candidate="$candidate"
-      fi
-    done
-
-    if [[ -n "$best_candidate" ]]; then
-      PROTON_PATH="$best_candidate"
-    fi
-  fi
-}
-
 detect_elden_ring_install() {
   local library
   local manifest_path
@@ -512,7 +447,6 @@ detect_elden_ring_install() {
 
       if [[ -d "$compat_prefix" ]]; then
         ELDEN_RING_PREFIX="$compat_prefix"
-        detect_proton_path
         break
       fi
     fi
@@ -529,11 +463,7 @@ select_wine_prefix() {
 
     if [[ -n "$ELDEN_RING_PREFIX" && "$WINEPREFIX_PATH" == "$ELDEN_RING_PREFIX" ]]; then
       SHOULD_INIT_PREFIX=0
-      if [[ -n "$PROTON_PATH" ]]; then
-        USE_PROTON_LAUNCHER=1
-      else
-        USE_PROTON_LAUNCHER=0
-      fi
+      USE_PROTON_LAUNCHER=1
       log "Using prefix override (matches Elden Ring Steam prefix): $WINEPREFIX_PATH"
     else
       SHOULD_INIT_PREFIX=1
@@ -549,13 +479,7 @@ select_wine_prefix() {
     log "Using Elden Ring prefix for integration: $ELDEN_RING_PREFIX"
     WINEPREFIX_PATH="$ELDEN_RING_PREFIX"
     SHOULD_INIT_PREFIX=0
-    if [[ -n "$PROTON_PATH" ]]; then
-      USE_PROTON_LAUNCHER=1
-      log "Detected Proton for Elden Ring: $PROTON_PATH"
-    else
-      USE_PROTON_LAUNCHER=0
-      warn "Could not detect Elden Ring Proton tool. Launcher will use wine."
-    fi
+    USE_PROTON_LAUNCHER=1
     return 0
   fi
 
@@ -620,7 +544,7 @@ desktop_escape_exec_arg() {
 create_launcher_script() {
   mkdir -p "$(dirname "$LAUNCHER_PATH")"
 
-  if [[ "$USE_PROTON_LAUNCHER" -eq 1 && -n "$PROTON_PATH" && -n "$ELDEN_RING_COMPATDATA_DIR" && -n "$STEAM_CLIENT_INSTALL_PATH" ]]; then
+  if [[ "$USE_PROTON_LAUNCHER" -eq 1 && -n "$ELDEN_RING_COMPATDATA_DIR" && -n "$STEAM_CLIENT_INSTALL_PATH" ]]; then
     cat > "$LAUNCHER_PATH" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -634,10 +558,40 @@ export STEAM_COMPAT_CLIENT_INSTALL_PATH="$STEAM_CLIENT_INSTALL_PATH"
 export STEAM_COMPAT_DATA_PATH="$ELDEN_RING_COMPATDATA_DIR"
 export ELDEN_RING_INSTALL_DIR="$ELDEN_RING_INSTALL_DIR"
 
+if [[ ! -f "\$STEAM_COMPAT_DATA_PATH/version" ]]; then
+  printf 'Error: Missing Proton version file: %s\n' "\$STEAM_COMPAT_DATA_PATH/version" >&2
+  exit 1
+fi
+
+PROTON_VERSION=\$(cat "\$STEAM_COMPAT_DATA_PATH/version")
+PROTON_ROOT=""
+
+if [[ "\$PROTON_VERSION" == GE-Proton* || "\$PROTON_VERSION" == Proton-GE* ]]; then
+  PROTON_ROOT="\$STEAM_COMPAT_CLIENT_INSTALL_PATH/compatibilitytools.d/\$PROTON_VERSION"
+else
+  for proton_dir in "\$STEAM_COMPAT_CLIENT_INSTALL_PATH/steamapps/common"/Proton*; do
+    if [[ ! -f "\$proton_dir/proton" ]]; then
+      continue
+    fi
+    if ! grep -q "CURRENT_PREFIX_VERSION=\"\$PROTON_VERSION\"" "\$proton_dir/proton"; then
+      continue
+    fi
+    PROTON_ROOT="\$proton_dir"
+    break
+  done
+fi
+
+if [[ -z "\$PROTON_ROOT" || ! -f "\$PROTON_ROOT/proton" ]]; then
+  printf 'Error: Could not find Proton installation for version %s\n' "\$PROTON_VERSION" >&2
+  exit 1
+fi
+
+printf '[setup] %s\n' "Using proton: \$PROTON_ROOT"
+
 APP_DIR="$(dirname "$EXE_PATH")"
 cd "\$APP_DIR"
 
-exec "$PROTON_PATH" run "./$(basename "$EXE_PATH")" "\$@"
+exec "\$PROTON_ROOT/proton" run "./$(basename "$EXE_PATH")" "\$@"
 EOF
     log "Launcher created (Proton mode): $LAUNCHER_PATH"
   else
