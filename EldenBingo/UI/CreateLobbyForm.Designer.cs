@@ -72,7 +72,7 @@
             label2.Location = new Point(6, 25);
             label2.Name = "label2";
             label2.Size = new Size(64, 15);
-            label2.TabIndex = 1;
+            label2.TabIndex = 2;
             label2.Text = "Nickname:";
             // 
             // _nicknameTextBox
@@ -80,7 +80,7 @@
             _nicknameTextBox.Location = new Point(111, 22);
             _nicknameTextBox.Name = "_nicknameTextBox";
             _nicknameTextBox.Size = new Size(113, 23);
-            _nicknameTextBox.TabIndex = 2;
+            _nicknameTextBox.TabIndex = 3;
             // 
             // _adminPasswordTextBox
             // 
@@ -106,7 +106,7 @@
             label5.Location = new Point(6, 57);
             label5.Name = "label5";
             label5.Size = new Size(38, 15);
-            label5.TabIndex = 3;
+            label5.TabIndex = 4;
             label5.Text = "Team:";
             // 
             // groupBox1
@@ -129,16 +129,17 @@
             _colorPanel.Location = new Point(80, 53);
             _colorPanel.Name = "_colorPanel";
             _colorPanel.Size = new Size(26, 25);
-            _colorPanel.TabIndex = 4;
+            _colorPanel.TabIndex = 5;
             // 
             // _teamComboBox
             // 
             _teamComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
             _teamComboBox.FormattingEnabled = true;
+            _teamComboBox.ItemHeight = 15;
             _teamComboBox.Location = new Point(111, 54);
             _teamComboBox.Name = "_teamComboBox";
             _teamComboBox.Size = new Size(113, 23);
-            _teamComboBox.TabIndex = 5;
+            _teamComboBox.TabIndex = 6;
             // 
             // groupBox2
             // 
@@ -149,7 +150,7 @@
             groupBox2.Location = new Point(12, 101);
             groupBox2.Name = "groupBox2";
             groupBox2.Size = new Size(235, 87);
-            groupBox2.TabIndex = 6;
+            groupBox2.TabIndex = 1;
             groupBox2.TabStop = false;
             groupBox2.Text = "Room Info";
             // 
@@ -218,6 +219,7 @@
             StartPosition = FormStartPosition.CenterParent;
             Text = "Create Lobby";
             FormClosing += CreateLobbyForm_FormClosing;
+            Shown += CreateLobbyForm_Shown;
             groupBox1.ResumeLayout(false);
             groupBox1.PerformLayout();
             groupBox2.ResumeLayout(false);

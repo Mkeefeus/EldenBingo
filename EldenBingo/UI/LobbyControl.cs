@@ -11,6 +11,7 @@ namespace EldenBingo.UI
         private MatchStatus _lastMatchStatus;
         private bool _lastPaused;
         private System.Timers.Timer? _timer;
+        private PopoutBoardForm? _popout;
 
         public LobbyControl() : base()
         {
@@ -57,6 +58,24 @@ namespace EldenBingo.UI
         public int GetSelectedSquareIndex()
         {
             return _bingoControl.GetSelectedSquareIndex();
+        }
+
+        public void OpenPopoutForm()
+        {
+            if (_popout != null)
+                return;
+            _popout = new PopoutBoardForm();
+            _popout.Client = Client;
+            _popout.FormClosed += (o, e) =>
+            {
+                // Reconnect key bindings to the regular bingo board when the popup form closes
+                _bingoControl.ConnectClickHotkey();
+                _popout = null;
+            };
+            _popout.Show();
+            // Disconnect the key bindings for the regular bingo control. Only the popup control will read keys as long as its open
+            _bingoControl.DisconnectClickHotkey();
+            _popout.SetScoreboardFromScoreboard(_scoreboardControl);
         }
 
         protected override void AddClientListeners()
@@ -285,8 +304,9 @@ namespace EldenBingo.UI
 
         private void _timer_Elapsed(object? sender, System.Timers.ElapsedEventArgs e)
         {
-            if (Client?.Room?.Match != null)
-                setMatchTimerLabel(Client.Room.Match.TimerString);
+            var match = Client?.Room?.Match;
+            if (match != null)
+                setMatchTimerLabel(match.TimerString);
         }
 
         private void appendText(string text, Color color)
@@ -429,6 +449,10 @@ namespace EldenBingo.UI
             void update()
             {
                 _timerLabel.Text = text;
+                if (_popout != null)
+                {
+                    _popout.SetTimerLabel(text);
+                }
             }
             if (InvokeRequired)
             {

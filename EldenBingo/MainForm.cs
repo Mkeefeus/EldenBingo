@@ -19,6 +19,7 @@ namespace EldenBingo
 {
     public partial class MainForm : Form
     {
+        public static MainForm? Instance { get; private set; }
         private static object _connectLock = new object();
         private readonly Client _client;
         private readonly GameProcessHandler _processHandler;
@@ -80,8 +81,6 @@ namespace EldenBingo
             addVersionToTitle();
         }
 
-        public static MainForm? Instance { get; private set; }
-
         public RawInputHandler RawInput => _rawInput;
 
         public SoundLibrary SoundPlayer => _sounds;
@@ -98,7 +97,8 @@ namespace EldenBingo
                 {
                     Font? font;
                     var ff2 = new FontFamily(ffName);
-                    font = new Font(ff2, size * scale, (FontStyle)Properties.Settings.Default.BingoFontStyle);
+                    var emSize = Math.Max(0.01f, size * scale);
+                    font = new Font(ff2, emSize, (FontStyle)Properties.Settings.Default.BingoFontStyle);
                     if (font.Name == ffName)
                         return font;
                 }
@@ -112,6 +112,10 @@ namespace EldenBingo
 
         public static MainForm? GetMainForm(Control control)
         {
+            if (Instance != null)
+            {
+                return Instance;
+            }
             Control parent = control;
             while (parent.Parent != null)
             {
@@ -376,13 +380,12 @@ namespace EldenBingo
 
             client.Connected += client_Connected;
             client.Disconnected += client_Disconnected;
-            
+
             client.Kicked += client_Kicked;
             client.OnStatus += client_OnStatus;
             client.OnError += client_OnError;
             client.OnRoomChanged += client_RoomChanged;
 
-            client.AddListener<ServerRegisterAccepted>(registerAccepted);
             client.AddListener<ServerJoinRoomAccepted>(joinRoomAccepted);
             client.AddListener<ServerJoinRoomDenied>(joinRoomDenied);
             client.AddListener<ServerEntireBingoBoardUpdate>(gotBingoBoard);
@@ -400,6 +403,7 @@ namespace EldenBingo
         private void client_Connected(object? sender, EventArgs e)
         {
             updateButtonAvailability();
+            _autoReconnect = true;
         }
 
         private async void client_Disconnected(object? sender, StringEventArgs e)
@@ -421,12 +425,6 @@ namespace EldenBingo
             _consoleControl.PrintToConsole(e.Message, Color.Red);
             _autoReconnect = false; //So we don't reconnect automatically after kick
             _connecting = false;
-        }
-
-        private void registerAccepted(ClientModel? model, ServerRegisterAccepted accepted)
-        {
-            // Only allow auto reconnect if the server actually responded positively to our registration
-            _autoReconnect = true;
         }
 
         private void joinRoomAccepted(ClientModel? _, ServerJoinRoomAccepted joinRoomAcceptedArgs)
@@ -509,8 +507,11 @@ namespace EldenBingo
         {
             void update()
             {
-                tabControl1.TabPages.Remove(_lobbyPage);
-                tabControl1.SelectedIndex = 0;
+                if (_client.Room == null)
+                {
+                    tabControl1.TabPages.Remove(_lobbyPage);
+                    tabControl1.SelectedIndex = 0;
+                }
             }
             if (InvokeRequired)
             {
@@ -747,33 +748,39 @@ namespace EldenBingo
 
             _mapWindowThread = new Thread(() =>
             {
-                Vector2u windowSize;
+                Size windowSize;
                 try
                 {
                     if (Properties.Settings.Default.MapWindowCustomSize && Properties.Settings.Default.MapWindowWidth >= 0 && Properties.Settings.Default.MapWindowHeight >= 0)
                     {
-                        windowSize = new Vector2u((uint)Properties.Settings.Default.MapWindowWidth, (uint)Properties.Settings.Default.MapWindowHeight);
+                        windowSize = new Size(Properties.Settings.Default.MapWindowWidth, Properties.Settings.Default.MapWindowHeight);
                     }
                     else if (!Properties.Settings.Default.MapWindowCustomSize && Properties.Settings.Default.MapWindowLastWidth >= 0 && Properties.Settings.Default.MapWindowLastHeight >= 0)
                     {
-                        windowSize = new Vector2u((uint)Properties.Settings.Default.MapWindowLastWidth, (uint)Properties.Settings.Default.MapWindowLastHeight);
+                        windowSize = new Size(Properties.Settings.Default.MapWindowLastWidth, Properties.Settings.Default.MapWindowLastHeight);
                     }
                     else
                     {
-                        windowSize = new Vector2u(500, 500);
+                        windowSize = new Size(500, 500);
                     }
-                    _mapWindow = new MapWindow(windowSize.X, windowSize.Y);
+                    
+                    Point mapLocation;
                     if (Properties.Settings.Default.MapWindowCustomPosition && Properties.Settings.Default.MapWindowX >= 0 && Properties.Settings.Default.MapWindowY >= 0)
                     {
-                        _mapWindow.Position = new Vector2i(Properties.Settings.Default.MapWindowX, Properties.Settings.Default.MapWindowY);
+                        mapLocation = new Point(Properties.Settings.Default.MapWindowX, Properties.Settings.Default.MapWindowY);
                     }
                     else
                     {
-                        _mapWindow.Position = new Vector2i(Left + Width, Top);
+                        mapLocation = new Point(Left + Width, Top);
                     }
+                    var offsets = WindowHelper.GetLocationAndSizeOffsets(mapLocation, windowSize, false, 24);
+                    mapLocation.Offset(offsets.Item1);
+                    windowSize = new Size(windowSize.Width + offsets.Item2.X, windowSize.Height + offsets.Item2.Y);
+                    _mapWindow = new MapWindow((uint)windowSize.Width, (uint)windowSize.Height);
+                    _mapWindow.Position = new Vector2i(mapLocation.X, mapLocation.Y);
                     _mapCoordinateProviderHandler = new MapCoordinateProviderHandler(_mapWindow, _processHandler, _client);
                     _mapWindow.Start();
-                } 
+                }
                 catch (Exception ex)
                 {
                     MessageBox.Show($"Error in map thread: {ex.Message}", Application.ProductName, MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -893,6 +900,11 @@ namespace EldenBingo
                 _leaveRoomButton.Enabled = connected;
                 _changeTeamButton.Enabled = connected;
             }));
+        }
+
+        private void _openExternalBoardToolStripButton_Click(object sender, EventArgs e)
+        {
+            _lobbyControl.OpenPopoutForm();
         }
     }
 }

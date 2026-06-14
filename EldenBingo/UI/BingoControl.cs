@@ -16,6 +16,7 @@ namespace EldenBingo.UI
         private const float BingoAnimationTimerMax = 3.0f;
         private const int AnimationFPS = 30;
 
+        public GridControl Grid => _gridControl;
         private static readonly Color BgColor = Color.FromArgb(18, 20, 20);
         private static readonly Color TextColor = Color.FromArgb(232, 230, 227);
         private BoardStatusEnum _boardStatus;
@@ -43,6 +44,11 @@ namespace EldenBingo.UI
             Squares = new BingoSquareControl[0];
             initSquareControls(_size);
             Load += bingoControl_Load;
+            Disposed += (o, e) =>
+            {
+                DisconnectClickHotkey();
+                disconnectMouseWheel();
+            };
             SizeChanged += bingoControl_SizeChanged;
             _gridControl.SizeChanged += _gridControl_SizeChanged;
             Properties.Settings.Default.PropertyChanged += default_PropertyChanged;
@@ -298,7 +304,8 @@ namespace EldenBingo.UI
         {
             _gridControl.UpdateGrid();
             recalculateFontSizeForSquares();
-            setupClickHotkey();
+            ConnectClickHotkey();
+            connectMouseWheel();
         }
 
         private async void keyPressed(object? sender, KeyEventArgs e)
@@ -485,6 +492,8 @@ namespace EldenBingo.UI
             void update()
             {
                 initSquareControls(0);
+                _boardStatusLabel.Text = string.Empty;
+                _boardStatusLabel.Visible = true;
                 Invalidate();
             }
             if (InvokeRequired)
@@ -526,13 +535,39 @@ namespace EldenBingo.UI
             }
         }
 
-        private void setupClickHotkey()
+        private void connectMouseWheel()
+        {
+            var mainForm = MainForm.GetMainForm(this);
+            if (mainForm != null)
+            {
+                mainForm.RawInput.MouseWheel += mouseWheel;
+            }
+        }
+
+        private void disconnectMouseWheel()
+        {
+            var mainForm = MainForm.GetMainForm(this);
+            if (mainForm != null)
+            {
+                mainForm.RawInput.MouseWheel -= mouseWheel;
+            }
+        }
+
+        public void ConnectClickHotkey()
         {
             var mainForm = MainForm.GetMainForm(this);
             if (mainForm != null)
             {                
                 mainForm.RawInput.KeyPressed += keyPressed;
-                mainForm.RawInput.MouseWheel += mouseWheel;
+            }
+        }
+
+        public void DisconnectClickHotkey()
+        {
+            var mainForm = MainForm.GetMainForm(this);
+            if (mainForm != null)
+            {
+                mainForm.RawInput.KeyPressed -= keyPressed;
             }
         }
 

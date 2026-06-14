@@ -1,7 +1,6 @@
 ﻿using EldenBingoCommon;
 using Neto.Shared;
 using System.ComponentModel;
-using static System.Windows.Forms.VisualStyles.VisualStyleElement.TextBox;
 
 namespace EldenBingo.UI
 {
@@ -12,6 +11,7 @@ namespace EldenBingo.UI
         private ToolStripMenuItem changeTeamNameToolStripMenuItem;
         private ToolStripMenuItem showMyTeamToolStripMenuItem;
         private IList<ScoreboardRowControl> _rows;
+        private ServerScoreboardUpdate _lastUpdate;
 
         public ScoreboardControl()
         {
@@ -26,6 +26,11 @@ namespace EldenBingo.UI
             contextMenuStrip1.Items.Add(showMyTeamToolStripMenuItem);
             SizeChanged += scoreboardControl_SizeChanged;
             Properties.Settings.Default.PropertyChanged += default_PropertyChanged;
+        }
+
+        internal void CopyFromScoreboard(ScoreboardControl control)
+        {
+            updateRows(control._lastUpdate?.Scoreboard ?? []);
         }
 
         public override Font Font
@@ -85,6 +90,7 @@ namespace EldenBingo.UI
 
         private void scoreBoardUpdate(ClientModel? _, ServerScoreboardUpdate update)
         {
+            _lastUpdate = update;
             updateRows(update.Scoreboard);
         }
 
