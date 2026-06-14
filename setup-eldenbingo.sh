@@ -3,13 +3,16 @@ set -euo pipefail
 
 GITHUB_REPO="awsker/EldenBingo"
 GITHUB_LATEST_RELEASE_API_URL="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
+PROJECT_ICON_URL="https://raw.githubusercontent.com/awsker/EldenBingo/refs/heads/main/icon.png"
 DEFAULT_INSTALL_DIR="$HOME/.local/share/eldenbingo"
 INSTALL_DIR="$DEFAULT_INSTALL_DIR"
 DEFAULT_PREFIX="$DEFAULT_INSTALL_DIR/wineprefix"
+DEFAULT_ICON_PATH="$DEFAULT_INSTALL_DIR/icon.png"
 DEFAULT_LAUNCHER_PATH="$HOME/.local/bin/eldenbingo"
 DEFAULT_DESKTOP_FILE_PATH="$HOME/.local/share/applications/eldenbingo.desktop"
 LAUNCHER_PATH="$DEFAULT_LAUNCHER_PATH"
 DESKTOP_FILE_PATH="$DEFAULT_DESKTOP_FILE_PATH"
+ICON_PATH="$DEFAULT_ICON_PATH"
 SHOULD_INIT_PREFIX=1
 USE_PROTON_LAUNCHER=0
 STEAM_CLIENT_INSTALL_PATH=""
@@ -37,6 +40,9 @@ Options:
   --desktop-file PATH      Path for generated desktop entry file.
                            Default: $DEFAULT_DESKTOP_FILE_PATH
 
+  --icon-path PATH         Path for downloaded project icon file.
+                           Default: <install-dir>/icon.png
+
   --force, -f              Overwrite existing launcher/desktop files without prompts.
 
   --skip-system-install    Never attempt package-manager installs.
@@ -61,6 +67,7 @@ Examples:
   $(basename "$0") --doctor
   $(basename "$0") --install-dir "$HOME/.local/share/eldenbingo-dev"
   $(basename "$0") --prefix-path "$HOME/.local/share/eldenbingo/wineprefix"
+  $(basename "$0") --icon-path "$HOME/.local/share/icons/eldenbingo.png"
   $(basename "$0") --launcher-path "$HOME/.local/bin/eldenbingo-dev" --force
 EOF
 }
@@ -148,6 +155,11 @@ parse_args() {
         DESKTOP_FILE_PATH="$(expand_home_path "$2")"
         shift 2
         ;;
+      --icon-path)
+        [[ $# -ge 2 ]] || die "Missing value for $1"
+        ICON_PATH="$(expand_home_path "$2")"
+        shift 2
+        ;;
       --force|-f)
         FORCE_OVERWRITE=1
         shift
@@ -171,6 +183,11 @@ parse_args() {
   done
 
   DEFAULT_PREFIX="$INSTALL_DIR/wineprefix"
+
+  # Keep default icon path aligned with install dir unless user overrides it.
+  if [[ "$ICON_PATH" == "$DEFAULT_ICON_PATH" ]]; then
+    ICON_PATH="$INSTALL_DIR/icon.png"
+  fi
 }
 
 require_supported_distro() {
@@ -320,6 +337,7 @@ print_doctor_report() {
   log "Configured install dir: $INSTALL_DIR"
   log "Configured launcher path: $LAUNCHER_PATH"
   log "Configured desktop file path: $DESKTOP_FILE_PATH"
+  log "Configured icon path: $ICON_PATH"
 
   if [[ -n "$PREFIX_PATH_OVERRIDE" ]]; then
     log "Configured prefix override: $PREFIX_PATH_OVERRIDE"
@@ -337,6 +355,12 @@ print_doctor_report() {
     log "Existing desktop entry found: $DESKTOP_FILE_PATH"
   else
     log "Existing desktop entry not found: $DESKTOP_FILE_PATH"
+  fi
+
+  if [[ -f "$ICON_PATH" ]]; then
+    log "Existing icon file found: $ICON_PATH"
+  else
+    log "Existing icon file not found: $ICON_PATH"
   fi
 
   log "Doctor mode complete"
@@ -392,6 +416,16 @@ download_and_install_latest_release() {
 
   rm -rf "$extract_dir"
   rm -f "$tmp_archive"
+}
+
+download_project_icon() {
+  local icon_dir
+
+  icon_dir="$(dirname "$ICON_PATH")"
+  mkdir -p "$icon_dir"
+
+  log "Downloading project icon to: $ICON_PATH"
+  curl -fL "$PROJECT_ICON_URL" -o "$ICON_PATH" || die "Failed to download project icon from $PROJECT_ICON_URL"
 }
 
 add_unique_path() {
@@ -656,7 +690,7 @@ Type=Application
 Name=EldenBingo
 Comment=Launch EldenBingo via Wine
 Exec=$desktop_exec
-Icon=wine
+Icon=$ICON_PATH
 Terminal=false
 Categories=Game;
 StartupNotify=true
@@ -683,6 +717,7 @@ main() {
   check_runtime_dependencies
   select_wine_prefix
   download_and_install_latest_release
+  download_project_icon
   confirm_overwrite_targets
   create_wine_prefix
   install_windows_dependencies
