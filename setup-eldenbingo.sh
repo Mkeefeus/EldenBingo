@@ -3,7 +3,8 @@ set -euo pipefail
 
 GITHUB_REPO="awsker/EldenBingo"
 GITHUB_LATEST_RELEASE_API_URL="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
-PROJECT_ICON_URL="https://raw.githubusercontent.com/awsker/EldenBingo/refs/heads/main/icon.png"
+PROJECT_ICON_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/refs/heads/main/icon.png"
+ELDEN_RING_APP_ID="1245620"
 DEFAULT_INSTALL_DIR="$HOME/.local/share/eldenbingo"
 INSTALL_DIR="$DEFAULT_INSTALL_DIR"
 DEFAULT_PREFIX="$DEFAULT_INSTALL_DIR/wineprefix"
@@ -21,6 +22,10 @@ PREFIX_PATH_OVERRIDE=""
 FORCE_OVERWRITE=0
 SKIP_SYSTEM_PACKAGE_INSTALL=0
 DOCTOR_ONLY=0
+ALWAYS_USE_WINE=0
+WINE_DEPS=(corefonts vcrun2022 dotnetdesktop8)
+PROTONTRICKS_FLATPAK_APP_ID="com.github.Matoking.protontricks"
+PROTONTRICKS_CMD=(protontricks)
 
 print_usage() {
   cat <<EOF
@@ -41,7 +46,7 @@ Options:
                            Default: $DEFAULT_DESKTOP_FILE_PATH
 
   --icon-path PATH         Path for downloaded project icon file.
-                           Default: <install-dir>/icon.png
+                           Default: $DEFAULT_ICON_PATH
 
   --force, -f              Overwrite existing launcher/desktop files without prompts.
 
@@ -52,6 +57,9 @@ Options:
   --doctor                 Run environment diagnostics only and exit.
                            Does not install packages, download releases, or
                            modify launcher/desktop files.
+
+  --force-wine             Always use Wine launcher mode, even when a Proton
+                           installation is detected.
 
   --help, -h               Show this help message.
 
@@ -65,6 +73,7 @@ Examples:
   $(basename "$0") --force
   $(basename "$0") --skip-system-install
   $(basename "$0") --doctor
+  $(basename "$0") --force-wine
   $(basename "$0") --install-dir "$HOME/.local/share/eldenbingo-dev"
   $(basename "$0") --prefix-path "$HOME/.local/share/eldenbingo/wineprefix"
   $(basename "$0") --icon-path "$HOME/.local/share/icons/eldenbingo.png"
@@ -172,6 +181,10 @@ parse_args() {
         DOCTOR_ONLY=1
         shift
         ;;
+      --force-wine)
+        ALWAYS_USE_WINE=1
+        shift
+        ;;
       --help|-h)
         print_usage
         exit 0
@@ -203,19 +216,19 @@ require_supported_distro() {
     PKG_MANAGER="pacman"
     PKG_INSTALL=(pacman -S --needed)
     PKG_UPDATE=()
-    REQUIRED_PACKAGES=(wine winetricks curl cabextract unzip xdg-utils)
+    REQUIRED_PACKAGES_BASE=(wine curl cabextract unzip xdg-utils)
   elif [[ "$DISTRO_ID" =~ ^(ubuntu|debian|linuxmint|pop)$ ]] || [[ "$DISTRO_LIKE" == *debian* ]]; then
     DISTRO_FAMILY="ubuntu"
     PKG_MANAGER="apt"
     PKG_UPDATE=(apt update)
     PKG_INSTALL=(apt install -y)
-    REQUIRED_PACKAGES=(wine64 winetricks curl cabextract unzip xdg-utils)
+    REQUIRED_PACKAGES_BASE=(wine64 curl cabextract unzip xdg-utils)
   elif [[ "$DISTRO_ID" =~ ^(fedora|rhel|centos|rocky|almalinux)$ ]] || [[ "$DISTRO_LIKE" == *fedora* ]] || [[ "$DISTRO_LIKE" == *rhel* ]]; then
     DISTRO_FAMILY="fedora"
     PKG_MANAGER="dnf"
     PKG_UPDATE=()
     PKG_INSTALL=(dnf install -y)
-    REQUIRED_PACKAGES=(wine winetricks curl cabextract unzip xdg-utils)
+    REQUIRED_PACKAGES_BASE=(wine curl cabextract unzip xdg-utils)
   else
     die "Unsupported distro: ID=${DISTRO_ID:-unknown}, ID_LIKE=${DISTRO_LIKE:-unknown}. Supported: Arch, Ubuntu/Debian, Fedora/RHEL families."
   fi
@@ -241,10 +254,58 @@ run_privileged() {
   return 127
 }
 
+is_protontricks_flatpak_installed() {
+  command -v flatpak >/dev/null 2>&1 || return 1
+  flatpak info "$PROTONTRICKS_FLATPAK_APP_ID" >/dev/null 2>&1
+}
+
+resolve_protontricks_command() {
+  if command -v protontricks >/dev/null 2>&1; then
+    PROTONTRICKS_CMD=(protontricks)
+    return 0
+  fi
+
+  if is_protontricks_flatpak_installed; then
+    PROTONTRICKS_CMD=(flatpak run "$PROTONTRICKS_FLATPAK_APP_ID")
+    log "Using Flatpak protontricks command: ${PROTONTRICKS_CMD[*]}"
+    return 0
+  fi
+
+  return 1
+}
+
 check_runtime_dependencies() {
   local missing_runtime=()
   local tool
-  for tool in wine winetricks curl unzip; do
+  local tricks_tool_check
+  local tricks_package=""
+  local required_tools=()
+  local required_packages=()
+
+  if [[ "$USE_PROTON_LAUNCHER" -eq 1 ]]; then
+    if resolve_protontricks_command; then
+      if [[ "${PROTONTRICKS_CMD[0]}" == "protontricks" ]]; then
+        tricks_tool_check="protontricks"
+      else
+        tricks_tool_check="flatpak"
+      fi
+    else
+      PROTONTRICKS_CMD=(protontricks)
+      tricks_tool_check="protontricks"
+      tricks_package="protontricks"
+    fi
+  else
+    tricks_tool_check="winetricks"
+    tricks_package="winetricks"
+  fi
+
+  required_tools=(wine "$tricks_tool_check" curl unzip)
+  required_packages=("${REQUIRED_PACKAGES_BASE[@]}")
+  if [[ -n "$tricks_package" ]]; then
+    required_packages+=("$tricks_package")
+  fi
+
+  for tool in "${required_tools[@]}"; do
     if ! command -v "$tool" >/dev/null 2>&1; then
       missing_runtime+=("$tool")
     fi
@@ -272,7 +333,7 @@ check_runtime_dependencies() {
       fi
     fi
 
-    if ! run_privileged "${PKG_INSTALL[@]}" "${REQUIRED_PACKAGES[@]}"; then
+    if ! run_privileged "${PKG_INSTALL[@]}" "${required_packages[@]}"; then
       if is_immutable_host; then
         die "Package install failed on an immutable host. Install dependencies via your host workflow, then rerun with --skip-system-install. Missing: ${missing_runtime[*]}"
       fi
@@ -284,14 +345,14 @@ check_runtime_dependencies() {
   fi
 
   # Re-check after install.
-  for tool in wine winetricks curl unzip; do
+  for tool in "${required_tools[@]}"; do
     command -v "$tool" >/dev/null 2>&1 || die "Dependency still missing after install: $tool"
   done
 }
 
 print_doctor_report() {
   local tool
-  local tools=(wine winetricks curl unzip)
+  local tools=(wine protontricks winetricks curl unzip)
 
   log "Doctor mode: running non-destructive environment diagnostics"
   log "Distro family: $DISTRO_FAMILY (package manager: $PKG_MANAGER)"
@@ -312,6 +373,10 @@ print_doctor_report() {
     log "Option active: --skip-system-install"
   fi
 
+  if [[ "$ALWAYS_USE_WINE" -eq 1 ]]; then
+    log "Option active: --force-wine"
+  fi
+
   for tool in "${tools[@]}"; do
     if command -v "$tool" >/dev/null 2>&1; then
       log "Dependency OK: $tool ($(command -v "$tool"))"
@@ -319,6 +384,12 @@ print_doctor_report() {
       warn "Dependency missing: $tool"
     fi
   done
+
+  if is_protontricks_flatpak_installed; then
+    log "Flatpak protontricks detected: $PROTONTRICKS_FLATPAK_APP_ID"
+  else
+    warn "Flatpak protontricks not detected: $PROTONTRICKS_FLATPAK_APP_ID"
+  fi
 
   detect_elden_ring_install
 
@@ -490,8 +561,8 @@ detect_elden_ring_install() {
   collect_steam_library_paths
 
   for library in "${STEAM_LIBRARY_PATHS[@]:-}"; do
-    manifest_path="$library/steamapps/appmanifest_1245620.acf"
-    ELDEN_RING_COMPATDATA_DIR="$library/steamapps/compatdata/1245620"
+    manifest_path="$library/steamapps/appmanifest_${ELDEN_RING_APP_ID}.acf"
+    ELDEN_RING_COMPATDATA_DIR="$library/steamapps/compatdata/${ELDEN_RING_APP_ID}"
     compat_prefix="$ELDEN_RING_COMPATDATA_DIR/pfx"
     install_dir="$library/steamapps/common/ELDEN RING"
 
@@ -518,7 +589,11 @@ select_wine_prefix() {
   if [[ -n "$PREFIX_PATH_OVERRIDE" ]]; then
     WINEPREFIX_PATH="$PREFIX_PATH_OVERRIDE"
 
-    if [[ -n "$ELDEN_RING_PREFIX" && "$WINEPREFIX_PATH" == "$ELDEN_RING_PREFIX" ]]; then
+    if [[ "$ALWAYS_USE_WINE" -eq 1 ]]; then
+      SHOULD_INIT_PREFIX=0
+      USE_PROTON_LAUNCHER=0
+      log "Using prefix override with forced Wine mode: $WINEPREFIX_PATH"
+    elif [[ -n "$ELDEN_RING_PREFIX" && "$WINEPREFIX_PATH" == "$ELDEN_RING_PREFIX" ]]; then
       SHOULD_INIT_PREFIX=0
       USE_PROTON_LAUNCHER=1
       log "Using prefix override (matches Elden Ring Steam prefix): $WINEPREFIX_PATH"
@@ -531,7 +606,7 @@ select_wine_prefix() {
     return 0
   fi
 
-  if [[ -n "$ELDEN_RING_PREFIX" ]]; then
+  if [[ -n "$ELDEN_RING_PREFIX" && "$ALWAYS_USE_WINE" -ne 1 ]]; then
     log "Detected Elden Ring Steam install: $ELDEN_RING_INSTALL_DIR"
     log "Using Elden Ring prefix for integration: $ELDEN_RING_PREFIX"
     WINEPREFIX_PATH="$ELDEN_RING_PREFIX"
@@ -540,7 +615,11 @@ select_wine_prefix() {
     return 0
   fi
 
-  warn "No Elden Ring Steam installation with Proton prefix was found."
+  if [[ "$ALWAYS_USE_WINE" -eq 1 ]]; then
+    log "Force Wine mode is enabled; using a standalone Wine prefix instead of Steam Proton integration."
+  else
+    warn "No Elden Ring Steam installation with Proton prefix was found."
+  fi
   warn "Game integration features require EldenBingo and Elden Ring in the same prefix. The bingo board can work without it, but map and launching integration will not."
 
   if ! ask_yes_no "Create/use a standalone Wine prefix anyway?"; then
@@ -588,8 +667,16 @@ create_wine_prefix() {
 }
 
 install_windows_dependencies() {
-  log "Installing common Windows dependencies (corefonts, vcrun2022, dotnetdesktop8) via winetricks"
-  if ! WINEPREFIX="$WINEPREFIX_PATH" winetricks -q corefonts vcrun2022 dotnetdesktop8; then
+  if [[ "$USE_PROTON_LAUNCHER" -eq 1 ]]; then
+    log "Installing common Windows dependencies (${WINE_DEPS[*]}) via ${PROTONTRICKS_CMD[*]}"
+    if ! "${PROTONTRICKS_CMD[@]}" "$ELDEN_RING_APP_ID" -q "${WINE_DEPS[@]}"; then
+      warn "protontricks reported an issue."
+    fi
+    return 0
+  fi
+
+  log "Installing common Windows dependencies (${WINE_DEPS[*]}) via winetricks"
+  if ! WINEPREFIX="$WINEPREFIX_PATH" winetricks -q "${WINE_DEPS[@]}"; then
     warn "winetricks reported an issue."
   fi
 }
@@ -714,8 +801,8 @@ main() {
     exit 0
   fi
 
-  check_runtime_dependencies
   select_wine_prefix
+  check_runtime_dependencies
   download_and_install_latest_release
   download_project_icon
   confirm_overwrite_targets
